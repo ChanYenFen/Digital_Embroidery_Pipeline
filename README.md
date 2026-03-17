@@ -1,6 +1,6 @@
 # EmbroideryFundamentalTest
 
-Author: Fen
+Author: Yen-Fen, Chan
 
 ## Installation
 

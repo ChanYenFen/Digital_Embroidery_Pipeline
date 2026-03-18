@@ -2,6 +2,8 @@
 
 Author: Yen-Fen Chan
 
+The project is a Python-based translation and optimization digital pipeline for computational embroidery.
+
 ## Installation
 
 If you are developing or reviewing the code in an external IDE (like VSCode), install the dependencies via pip:

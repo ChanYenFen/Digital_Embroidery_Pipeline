@@ -23,10 +23,6 @@ in_dict = in_dict if 'in_dict' in locals() else None           # type: ignore
 folder_path = folder_path if 'folder_path' in locals() else "" # type: ignore
 name = name if 'name' in locals() else "output"                # type: ignore
 
-JUMP_THRESHOLD = 121
-TIE_OFFSET = 10
-MIRROR = True
-
 if export and in_dict:
     # 1. Initialize pyembroidery pattern
     pattern = pyembroidery.EmbPattern()
@@ -127,8 +123,8 @@ if export and in_dict:
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
     
-    dst_path = os.path.join(folder_path, name + ".dst")
-    csv_path = os.path.join(folder_path, name + ".csv")
+    dst_path = os.path.normpath(os.path.join(folder_path, "dst", name + ".dst"))
+    csv_path = os.path.normpath(os.path.join(folder_path, "csv", name + ".csv"))
 
     stop_settings = {
         "contingency": pyembroidery.CONTINGENCY_TIE_OFF_NONE,

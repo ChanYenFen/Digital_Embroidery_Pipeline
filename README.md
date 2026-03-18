@@ -1,38 +1,24 @@
-# EmbroideryFundamentalTest
+# Digital_Embroidery_Pipeline
 
-Author: Yen-Fen, Chan
+Author: Yen-Fen Chan
 
 ## Installation
 
-```bash
+If you are developing or reviewing the code in an external IDE (like VSCode), install the dependencies via pip:
+
+```
 pip install -r requirements.txt
 ```
 
-## ▶️ Run
+## Run (Rhino Grasshopper Environment)
 
-To generate a new project using this template:
+For Rhino 8 Grasshopper Users (Native CPython 3)
+You do not need to use the command line to install dependencies. The Grasshopper Python components in this project use Rhino 8's native package manager. 
 
-1. **Open Command Prompt**
-
-2. **Activate your Python environment** (if applicable):
-   ```bash
-   path\to\your\env\Scripts\activate
-   ```
-
-3. **Navigate to the folder where you want to create the new project:**
-   ```bash
-   cd path\to\your\desired\project\location
-   ```
-
-4. **Run Cookiecutter with the local template:**
-   ```bash
-   cookiecutter path\to\cookiecutter-rhino-gh-python
-   ```
-
-5. **Follow the prompts** to customize your project (e.g., project name, author).
+Simply open the Grasshopper definition and run the script in the top left canvas "Check & Install Modules"; Rhino will automatically read the `# r: package_name` headers and install the required modules internally.
 
 
-## 📁 Project Structure
+## Project Structure
 
 This project follows a standardized folder layout for Rhino + Grasshopper Python workflows:
 
@@ -40,22 +26,20 @@ This project follows a standardized folder layout for Rhino + Grasshopper Python
   Rhino `.3dm` files or exported geometry used as base design assets or simulation references.
 
 - `data/`  
-  Input data such as `.csv`, `.json`, `.txt`, or visual references (`.png`, `.pdf`, etc.). These are treated as part of the digital design pipeline's inputs.
+  Input data and machine constraints, as well as digital-to-machine outputs like `.csv`, `.dst`, and `.json`.
 
 - `doc/`  
-  Documentation, sketches, technical drawings, or diagrams relevant to the design or logic.
+  Documentation, sketches, technical drawings, and visual references (`.png`, `.pdf`, etc.).
 
 - `result/`  
   Outputs generated from scripts or Grasshopper definitions, such as renderings and log files.
 
 - `src/`  
-  Source code including GH Python modules, reusable logic, and external language components (e.g., C#, C++, Python).
+  Source code including GH Python scripts (.py), reusable logic, and external language components.
 
 - `.github/`  
   GitHub-specific automation (e.g., Actions, issue templates).  
-  ⚠️ **Note:** If the project involves proprietary data or IP, do **not** make this repository public.
+  **Note:** If the project involves proprietary data or IP, do **not** make this repository public.
 
 - `requirements.txt`  
-  Lists Python dependencies. Install them using:
-  ```bash
-  pip install -r requirements.txt
+  Lists Python dependencies for external IDE environment setup.

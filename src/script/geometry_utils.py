@@ -268,13 +268,17 @@ if __name__ == "__main__":
     USE_2OPT   = True
     MAX_PASSES = 10
 
-    if native_sort:
+    # Always sort with the native backend; fall back to the pure-Python R-Tree
+    # sorter only if the DLL can't be loaded (missing/locked, other platform).
+    try:
+        native_bridge.load_dll()
         sort_curves_func = partial(sort_curves_native,
                                    use_two_opt=USE_2OPT,
                                    two_opt_max_passes=MAX_PASSES,
                                    knn_k=KNN_K,
-                                   if_flip=if_flip)
-    else:
+                                   if_flip=if_flip)  # type: ignore
+    except Exception as e:
+        print("native curve_sort unavailable, falling back to R-Tree: %s" % e)
         sort_curves_func = partial(sort_curves_by_rtree,
                                    use_two_opt=USE_2OPT,
                                    two_opt_max_passes=MAX_PASSES)

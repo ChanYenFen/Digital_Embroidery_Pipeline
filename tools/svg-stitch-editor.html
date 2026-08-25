@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SVG Stitch Editor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #111; color: #e0e0e0; padding: 24px; }
+  .container { max-width: 960px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+  .upload-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .upload-label { padding: 8px 16px; background: #222; border: 1px solid #444; border-radius: 6px; cursor: pointer; font-size: 14px; color: #e0e0e0; }
+  .upload-label:hover { border-color: #888; }
+  .file-name { font-size: 13px; color: #888; }
+  .status { font-size: 13px; color: #5dcaa5; padding: 8px 12px; background: #0a2e24; border: 1px solid #1d5e45; border-radius: 6px; display: none; }
+  .grid { display: grid; grid-template-columns: 240px 1fr; gap: 12px; }
+  .panel { border: 1px solid #333; border-radius: 10px; padding: 12px; background: #1a1a1a; }
+  .panel-title { font-size: 13px; font-weight: 500; color: #666; margin-bottom: 8px; }
+  .panel-hint { font-size: 11px; color: #555; margin-bottom: 10px; }
+
+  .path-list { display: flex; flex-direction: column; gap: 2px; max-height: 400px; min-height: 120px; overflow-y: auto; padding-bottom: 40px; }
+
+  .path-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 8px; background: #222; border: 1px solid #333;
+    border-radius: 5px; cursor: grab; font-size: 11px;
+    font-family: monospace; color: #aaa; user-select: none;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  .path-item:active { cursor: grabbing; }
+  .path-item:hover { background: #282828; }
+  .path-item.active { background: #1a2a3a; border-color: #3a6a9a; color: #85b7eb; }
+  .path-item.drag-over { border-color: #FFFF00; border-style: dashed; }
+
+  .path-seq {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 4px;
+    background: #333; color: #888; font-size: 11px; font-weight: 600;
+    flex-shrink: 0;
+  }
+  .path-item.active .path-seq { background: #2a4a6a; color: #85b7eb; }
+
+  .path-swatch {
+    width: 10px; height: 10px; border-radius: 2px;
+    border: 1px solid #555; flex-shrink: 0;
+  }
+
+  .path-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+  .drag-handle { color: #444; font-size: 14px; flex-shrink: 0; cursor: grab; }
+  .drag-handle:hover { color: #888; }
+
+  .preview-box { border: 1px solid #333; border-radius: 10px; overflow: hidden; background: #BEBEBE; min-height: 350px; display: flex; align-items: center; justify-content: center; color: #444; }
+  .preview-box svg { width: 100%; height: 100%; }
+
+  .edit-panel { border: 1px solid #333; border-radius: 10px; padding: 12px; background: #1a1a1a; }
+  .edit-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: #666; }
+  .field input, .field select { padding: 6px 8px; border: 1px solid #444; border-radius: 5px; font-size: 13px; background: #222; color: #e0e0e0; }
+  .field input[type="color"] { height: 32px; padding: 2px; cursor: pointer; }
+  .name-display { margin-top: 12px; padding: 8px; background: #111; border-radius: 5px; border: 1px solid #333; font-family: monospace; font-size: 11px; color: #888; word-break: break-all; }
+  .download-btn { padding: 10px 20px; background: #185fa5; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; align-self: flex-start; display: none; }
+  .download-btn:hover { background: #2070c0; }
+  .placeholder { color: #555; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="upload-row">
+    <label class="upload-label">
+      ⬆ 選擇 SVG
+      <input type="file" id="svgUpload" accept=".svg" style="display:none"/>
+    </label>
+    <span class="file-name" id="fileName"></span>
+  </div>
+  <div class="status" id="statusMsg"></div>
+  <div class="grid">
+    <div class="panel" id="pathPanel">
+      <div class="panel-title">Path 圖層</div>
+      <div class="panel-hint">拖曳調整順序 · 上先下後 · 後蓋前</div>
+      <div class="path-list" id="pathLayerList">
+        <span class="placeholder">上傳 SVG 掃描</span>
+      </div>
+    </div>
+    <div class="preview-box" id="svgPreview">預覽</div>
+  </div>
+  <div class="edit-panel">
+    <div class="panel-title">編輯參數</div>
+    <div id="editPanel">
+      <span class="placeholder">選擇 Path 進行編輯</span>
+    </div>
+  </div>
+  <button class="download-btn" id="downloadBtn">⬇ 下載 SVG</button>
+</div>
+
+<script>
+const PREVIEW_STROKE_WIDTH = 3;
+let currentSvg = null;
+let pathLayers = [];      // array of { group, paths, origStroke, origStrokeWidths, params }
+let selectedPathIdx = null;
+let dragSrcIdx = null;
+
+// ── helpers ──
+
+function normalizeColor(val) {
+  // 把各種 SVG 顏色格式轉成 #RRGGBB，給 input[type=color] 用
+  if (!val || val === 'none' || val === 'transparent') return '#222222';
+  if (/^#[0-9a-fA-F]{6}$/.test(val)) return val;
+  if (/^#[0-9a-fA-F]{3}$/.test(val)) {
+    return '#' + val[1]+val[1] + val[2]+val[2] + val[3]+val[3];
+  }
+  // rgb(r,g,b)
+  const m = val.match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/);
+  if (m) {
+    const hex = (n) => parseInt(n).toString(16).padStart(2,'0');
+    return '#' + hex(m[1]) + hex(m[2]) + hex(m[3]);
+  }
+  // 用隱藏 canvas 解析 named colors
+  const ctx = document.createElement('canvas').getContext('2d');
+  ctx.fillStyle = val;
+  return ctx.fillStyle; // 回傳 #rrggbb
+}
+
+function defaultParams(idx) {
+  return {
+    sequence: String(idx),
+    ets: 'ETS',
+    colorId: '1',
+    patternType: '0',
+    stitchLen: '30',
+    patternWid: '0',
+    description: 'path' + idx
+  };
+}
+
+function parseLayerName(name) {
+  const p = name.split('_');
+  return {
+    sequence: p[0] || '0', ets: p[1] || 'ETS', colorId: p[2] || '1',
+    patternType: p[3] || '0', stitchLen: p[4] || '30', patternWid: p[5] || '0',
+    description: p.slice(6).join('_') || 'desc'
+  };
+}
+
+function buildLayerName(p) {
+  return [p.sequence, p.ets, p.colorId, p.patternType, p.stitchLen, p.patternWid, p.description].join('_');
+}
+
+// ── sequence sync ──
+
+function applyLayerName(layer) {
+  // 同一圖層的每條 path 共用同一組參數，因此共用同一個 id
+  const name = buildLayerName(layer.params);
+  layer.paths.forEach(p => { p.id = name; });
+}
+
+function syncSequences() {
+  pathLayers.forEach((layer, idx) => {
+    layer.params.sequence = String(idx);
+    applyLayerName(layer);
+  });
+}
+
+function syncSvgOrder() {
+  const root = currentSvg.documentElement;
+  // 按 pathLayers 順序重新排列 <g>，後面的 z-order 更高
+  pathLayers.forEach(layer => {
+    root.appendChild(layer.group);
+  });
+}
+
+// ── cleanup & flatten ──
+
+function cleanupAndFlatten() {
+  const root = currentSvg.documentElement;
+  pathLayers = [];
+
+  // 蒐集所有 path，並記住它原本掛在哪個父層底下
+  const found = [];
+  const walk = (node) => {
+    if (node.nodeType !== 1) return;
+    if (node.tagName === 'path') found.push({ el: node, parent: node.parentNode });
+    for (let child of node.children) walk(child);
+  };
+  walk(root);
+
+  // 同一個原始 <g> 底下的 path 併成一個圖層；直接掛在 root 下的則各自獨立
+  const buckets = [];
+  const byParent = new Map();
+  found.forEach(item => {
+    const grouped = item.parent && item.parent !== root && item.parent.tagName === 'g';
+    if (!grouped) { buckets.push([item.el]); return; }
+    if (!byParent.has(item.parent)) {
+      const bucket = [];
+      byParent.set(item.parent, bucket);
+      buckets.push(bucket);
+    }
+    byParent.get(item.parent).push(item.el);
+  });
+
+  const defs = root.querySelector('defs');
+  while (root.firstChild) root.removeChild(root.firstChild);
+  if (defs) root.appendChild(defs);
+
+  buckets.forEach((paths, idx) => {
+    const params = defaultParams(idx);
+    const g = currentSvg.createElementNS('http://www.w3.org/2000/svg', 'g');
+    const layer = { group: g, paths: [], origStroke: '#222222', origStrokeWidths: [], params };
+
+    paths.forEach((path, j) => {
+      const cloned = path.cloneNode(true);
+
+      if (j === 0) {
+        // 整個圖層共用第一條 path 的顏色，預覽和色票才會一致
+        const rawStroke = cloned.getAttribute('stroke');
+        layer.origStroke = (rawStroke && rawStroke !== 'none' && rawStroke.startsWith('#')) ? rawStroke : '#222222';
+      }
+      cloned.setAttribute('stroke', layer.origStroke);
+      layer.origStrokeWidths.push(cloned.getAttribute('stroke-width') || '1');
+      cloned.setAttribute('stroke-width', PREVIEW_STROKE_WIDTH);
+
+      g.appendChild(cloned);
+      layer.paths.push(cloned);
+    });
+
+    applyLayerName(layer);
+    root.appendChild(g);
+    pathLayers.push(layer);
+  });
+
+  return { layers: pathLayers.length, paths: found.length };
+}
+
+// ── drag & drop ──
+
+function onDragStart(e, idx) {
+  dragSrcIdx = idx;
+  e.dataTransfer.effectAllowed = 'move';
+  e.target.style.opacity = '0.4';
+}
+
+function onDragEnd(e) {
+  e.target.style.opacity = '1';
+  document.querySelectorAll('.path-item').forEach(el => el.classList.remove('drag-over'));
+  dragSrcIdx = null;
+}
+
+function onDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+}
+
+function onDragEnter(e, idx) {
+  if (idx !== dragSrcIdx) {
+    e.currentTarget.classList.add('drag-over');
+  }
+}
+
+function onDragLeave(e) {
+  e.currentTarget.classList.remove('drag-over');
+}
+
+function onDrop(e, dropIdx) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  if (dragSrcIdx === null || dragSrcIdx === dropIdx) return;
+
+  // reorder pathLayers
+  const [moved] = pathLayers.splice(dragSrcIdx, 1);
+  pathLayers.splice(dropIdx, 0, moved);
+
+  // update selected index
+  if (selectedPathIdx !== null) {
+    if (selectedPathIdx === dragSrcIdx) {
+      selectedPathIdx = dropIdx;
+    } else if (dragSrcIdx < selectedPathIdx && dropIdx >= selectedPathIdx) {
+      selectedPathIdx--;
+    } else if (dragSrcIdx > selectedPathIdx && dropIdx <= selectedPathIdx) {
+      selectedPathIdx++;
+    }
+  }
+
+  syncSequences();
+  syncSvgOrder();
+  renderPathList();
+  renderPreview();
+
+  if (selectedPathIdx !== null) renderEditPanel(selectedPathIdx);
+}
+
+// ── render list ──
+
+function renderPathList() {
+  const list = document.getElementById('pathLayerList');
+  list.innerHTML = '';
+
+  pathLayers.forEach((layer, idx) => {
+    const item = document.createElement('div');
+    item.className = 'path-item' + (selectedPathIdx === idx ? ' active' : '');
+    item.draggable = true;
+
+    item.addEventListener('dragstart', e => onDragStart(e, idx));
+    item.addEventListener('dragend', onDragEnd);
+    item.addEventListener('dragover', onDragOver);
+    item.addEventListener('dragenter', e => onDragEnter(e, idx));
+    item.addEventListener('dragleave', onDragLeave);
+    item.addEventListener('drop', e => onDrop(e, idx));
+    item.addEventListener('click', () => selectPath(idx));
+
+    const handle = document.createElement('span');
+    handle.className = 'drag-handle';
+    handle.textContent = '⠿';
+
+    const seq = document.createElement('span');
+    seq.className = 'path-seq';
+    seq.textContent = idx;
+
+    const swatch = document.createElement('span');
+    swatch.className = 'path-swatch';
+    swatch.style.background = layer.origStroke;
+
+    const name = document.createElement('span');
+    name.className = 'path-name';
+    const p = layer.params;
+    name.textContent = p.ets + '_' + p.colorId + '_' + p.description
+      + (layer.paths.length > 1 ? '  (' + layer.paths.length + ' paths)' : '');
+
+    item.appendChild(handle);
+    item.appendChild(seq);
+    item.appendChild(swatch);
+    item.appendChild(name);
+    list.appendChild(item);
+  });
+}
+
+// ── select & highlight ──
+
+function selectPath(idx) {
+  // 再點一次取消選取
+  if (selectedPathIdx === idx) {
+    deselectAll();
+    return;
+  }
+
+  if (selectedPathIdx !== null && pathLayers[selectedPathIdx]) {
+    const prev = pathLayers[selectedPathIdx];
+    prev.paths.forEach(p => { p.setAttribute('stroke', prev.origStroke); p.removeAttribute('filter'); });
+  }
+
+  selectedPathIdx = idx;
+  const cur = pathLayers[idx];
+  cur.paths.forEach(p => p.setAttribute('stroke', '#FFFF00'));
+
+  const root = currentSvg.documentElement;
+  let defs = root.querySelector('defs');
+  if (!defs) { defs = currentSvg.createElementNS('http://www.w3.org/2000/svg','defs'); root.prepend(defs); }
+  if (!defs.querySelector('#glow-filter')) {
+    const f = currentSvg.createElementNS('http://www.w3.org/2000/svg','filter');
+    f.id = 'glow-filter';
+    // 用 userSpaceOnUse：預設的 objectBoundingBox 會讓直線 path（bbox 某一邊為 0）
+    // 的濾鏡區域變成零面積而整條消失。實際區域在 renderPreview() 依畫面範圍設定。
+    f.setAttribute('filterUnits','userSpaceOnUse');
+    f.setAttribute('x','-100000'); f.setAttribute('y','-100000');
+    f.setAttribute('width','200000'); f.setAttribute('height','200000');
+    const bl = currentSvg.createElementNS('http://www.w3.org/2000/svg','feGaussianBlur');
+    bl.setAttribute('stdDeviation','4'); bl.setAttribute('result','blur');
+    const mg = currentSvg.createElementNS('http://www.w3.org/2000/svg','feMerge');
+    const n1 = currentSvg.createElementNS('http://www.w3.org/2000/svg','feMergeNode'); n1.setAttribute('in','blur');
+    const n2 = currentSvg.createElementNS('http://www.w3.org/2000/svg','feMergeNode'); n2.setAttribute('in','SourceGraphic');
+    mg.appendChild(n1); mg.appendChild(n2); f.appendChild(bl); f.appendChild(mg); defs.appendChild(f);
+  }
+  cur.paths.forEach(p => p.setAttribute('filter','url(#glow-filter)'));
+
+  renderPreview();
+  renderPathList();
+  renderEditPanel(idx);
+}
+
+// ── edit panel ──
+
+function renderEditPanel(idx) {
+  const panel = document.getElementById('editPanel');
+  panel.innerHTML = '';
+  const layer = pathLayers[idx];
+  const params = layer.params;
+
+  const grid = document.createElement('div');
+  grid.className = 'edit-grid';
+
+  const makeField = (label, paramKey, type, opts) => {
+    const div = document.createElement('div'); div.className = 'field';
+    const lbl = document.createElement('label'); lbl.textContent = label; div.appendChild(lbl);
+
+    if (type === 'select') {
+      const sel = document.createElement('select');
+      (opts||[]).forEach(o => {
+        const opt = document.createElement('option');
+        opt.value = o; opt.textContent = o;
+        if (params[paramKey] === o) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener('change', e => { params[paramKey] = e.target.value; applyParams(idx); });
+      div.appendChild(sel);
+    } else if (type === 'color') {
+      const inp = document.createElement('input');
+      inp.type = 'color'; inp.value = normalizeColor(layer.origStroke);
+      inp.addEventListener('input', e => { layer.origStroke = e.target.value.toUpperCase(); renderPathList(); });
+      div.appendChild(inp);
+    } else {
+      const inp = document.createElement('input');
+      inp.type = type; inp.value = params[paramKey] || '';
+      inp.addEventListener('change', e => { params[paramKey] = e.target.value; applyParams(idx); });
+      div.appendChild(inp);
+    }
+    grid.appendChild(div);
+  };
+
+  // sequence 不顯示（由拖曳決定）
+  makeField('Embroidery type','ets','select',['ETS','SAT','OTHER']);
+  makeField('Color ID','colorId','number');
+  makeField('預覽顏色','_color','color');
+  makeField('Pattern type','patternType','number');
+  makeField('Stitch length','stitchLen','number');
+  makeField('Pattern width','patternWid','number');
+  makeField('Description','description','text');
+
+  panel.appendChild(grid);
+  const nd = document.createElement('div'); nd.className = 'name-display'; nd.id = 'nameDisplay';
+  nd.textContent = 'Output ID: ' + buildLayerName(params);
+  panel.appendChild(nd);
+}
+
+function applyParams(idx) {
+  const params = pathLayers[idx].params;
+  applyLayerName(pathLayers[idx]);
+  document.getElementById('nameDisplay').textContent = 'Output ID: ' + buildLayerName(params);
+  renderPathList();
+}
+
+// ── preview ──
+
+function renderPreview() {
+  const previewDiv = document.getElementById('svgPreview');
+  previewDiv.innerHTML = new XMLSerializer().serializeToString(currentSvg.documentElement);
+  const svgEl = previewDiv.querySelector('svg');
+  if (svgEl) {
+    try {
+      const bb = svgEl.getBBox(); const pad = 20;
+      svgEl.setAttribute('viewBox', (bb.x-pad)+' '+(bb.y-pad)+' '+(bb.width+pad*2)+' '+(bb.height+pad*2));
+      svgEl.style.width = '100%'; svgEl.style.height = '100%';
+
+      // glow 的濾鏡區域改用整張圖的實際範圍，否則直線 path 會被零面積區域裁掉
+      const gf = svgEl.querySelector('#glow-filter');
+      if (gf) {
+        const gpad = 50;
+        gf.setAttribute('filterUnits','userSpaceOnUse');
+        gf.setAttribute('x', bb.x-gpad);       gf.setAttribute('y', bb.y-gpad);
+        gf.setAttribute('width', bb.width+gpad*2); gf.setAttribute('height', bb.height+gpad*2);
+      }
+    } catch(e){}
+  }
+}
+
+// ── upload ──
+
+document.getElementById('svgUpload').addEventListener('change', e => {
+  const file = e.target.files[0]; if (!file) return;
+  document.getElementById('fileName').textContent = file.name;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    currentSvg = new DOMParser().parseFromString(ev.target.result, 'image/svg+xml');
+    if (currentSvg.documentElement.tagName !== 'svg') { alert('Invalid SVG'); return; }
+    selectedPathIdx = null;
+    const count = cleanupAndFlatten();
+    const msg = document.getElementById('statusMsg');
+    msg.style.display = 'block';
+    msg.textContent = '✓ 找到 ' + count.layers + ' 個圖層（共 ' + count.paths + ' 條 path）';
+    renderPathList(); renderPreview();
+    document.getElementById('downloadBtn').style.display = 'inline-block';
+    document.getElementById('editPanel').innerHTML = '<span class="placeholder">選擇 Path 進行編輯</span>';
+  };
+  reader.readAsText(file);
+});
+
+// ── deselect ──
+
+function deselectAll() {
+  if (selectedPathIdx !== null && pathLayers[selectedPathIdx]) {
+    const prev = pathLayers[selectedPathIdx];
+    prev.paths.forEach(p => { p.setAttribute('stroke', prev.origStroke); p.removeAttribute('filter'); });
+  }
+  selectedPathIdx = null;
+  renderPreview();
+  renderPathList();
+  document.getElementById('editPanel').innerHTML = '<span class="placeholder">選擇 Path 進行編輯</span>';
+}
+
+// ── download ──
+
+document.getElementById('downloadBtn').addEventListener('click', () => {
+  if (!currentSvg) return;
+
+  // 清除高亮
+  if (selectedPathIdx !== null) {
+    const c = pathLayers[selectedPathIdx];
+    c.paths.forEach(p => { p.setAttribute('stroke', c.origStroke); p.removeAttribute('filter'); });
+  }
+  // 還原線寬與顏色
+  pathLayers.forEach(l => {
+    l.paths.forEach((p, j) => {
+      p.setAttribute('stroke-width', l.origStrokeWidths[j]);
+      p.setAttribute('stroke', l.origStroke);
+    });
+  });
+  // 移除 glow filter
+  const gf = currentSvg.documentElement.querySelector('#glow-filter');
+  if (gf) gf.remove();
+
+  const svgStr = '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    new XMLSerializer().serializeToString(currentSvg.documentElement);
+
+  const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (document.getElementById('fileName').textContent || 'output').replace(/\.svg$/i,'') + '_processed.svg';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+
+  // 恢復預覽
+  pathLayers.forEach(l => l.paths.forEach(p => p.setAttribute('stroke-width', PREVIEW_STROKE_WIDTH)));
+  if (selectedPathIdx !== null) {
+    const c = pathLayers[selectedPathIdx];
+    c.paths.forEach(p => { p.setAttribute('stroke','#FFFF00'); p.setAttribute('filter','url(#glow-filter)'); });
+  }
+  renderPreview();
+});
+</script>
+</body>
+</html>

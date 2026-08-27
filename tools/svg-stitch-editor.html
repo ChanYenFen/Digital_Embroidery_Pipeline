@@ -59,6 +59,17 @@
   .field label { font-size: 12px; color: #666; }
   .field input, .field select { padding: 6px 8px; border: 1px solid #444; border-radius: 5px; font-size: 13px; background: #222; color: #e0e0e0; }
   .field input[type="color"] { height: 32px; padding: 2px; cursor: pointer; }
+
+  .field-wide { grid-column: 1 / -1; }
+  .palette { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+  .palette-swatch {
+    position: relative; height: 30px; border-radius: 5px;
+    border: 2px solid #333; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-family: monospace; font-weight: 600;
+  }
+  .palette-swatch:hover { border-color: #888; }
+  .palette-swatch.active { border-color: #85b7eb; box-shadow: 0 0 0 2px #1a2a3a; }
   .name-display { margin-top: 12px; padding: 8px; background: #111; border-radius: 5px; border: 1px solid #333; font-family: monospace; font-size: 11px; color: #888; word-break: break-all; }
   .download-btn { padding: 10px 20px; background: #185fa5; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; align-self: flex-start; display: none; }
   .download-btn:hover { background: #2070c0; }
@@ -94,14 +105,15 @@
   <button class="download-btn" id="downloadBtn">⬇ 下載 SVG</button>
 </div>
 
+<script src="palette.js"></script>
 <script>
 const PREVIEW_STROKE_WIDTH = 3;
 let currentSvg = null;
-let pathLayers = [];      // array of { group, paths, origStroke, origStrokeWidths, params }
+let pathLayers = [];      // 每個元素是 { group, paths, origStroke, origStrokeWidths, params }
 let selectedPathIdx = null;
 let dragSrcIdx = null;
 
-// ── helpers ──
+// ── 工具函式 ──
 
 function normalizeColor(val) {
   // 把各種 SVG 顏色格式轉成 #RRGGBB，給 input[type=color] 用
@@ -110,7 +122,7 @@ function normalizeColor(val) {
   if (/^#[0-9a-fA-F]{3}$/.test(val)) {
     return '#' + val[1]+val[1] + val[2]+val[2] + val[3]+val[3];
   }
-  // rgb(r,g,b)
+  // rgb(r,g,b) 格式
   const m = val.match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/);
   if (m) {
     const hex = (n) => parseInt(n).toString(16).padStart(2,'0');
@@ -147,11 +159,25 @@ function buildLayerName(p) {
   return [p.sequence, p.ets, p.colorId, p.patternType, p.stitchLen, p.patternWid, p.description].join('_');
 }
 
-// ── sequence sync ──
+/** 面板上顯示這個圖層實際會寫出的 id，多條 path 時附上條數。 */
+function layerNameDisplay(layer) {
+  const base = buildLayerName(layer.params);
+  const n = layer.paths.length;
+  return n > 1 ? base + '   (' + n + ' paths)' : base;
+}
+
+// ── 順序同步 ──
 
 function applyLayerName(layer) {
-  // 同一圖層的每條 path 共用同一組參數，因此共用同一個 id
   const name = buildLayerName(layer.params);
+
+  // 乾淨的圖層名稱掛在 <g> 上，這是這組參數的正規來源。
+  // <g> 一定要有 id：Rhino 的 SVG 匯入器碰到匿名 <g> 會把 Object Name 配錯。
+  layer.group.id = name;
+
+  // 同層的每條 path 共用同一組參數，因此共用同一個 id。
+  // 注意 SVG 規範要求 id 唯一，這裡刻意不遵守以換取乾淨的名稱；
+  // 下游是逐一讀取 <path> 的 id，不靠 id 做查找，所以重複沒有影響。
   layer.paths.forEach(p => { p.id = name; });
 }
 
@@ -168,19 +194,69 @@ function syncSvgOrder() {
   pathLayers.forEach(layer => {
     root.appendChild(layer.group);
   });
+  // 高亮覆蓋層要維持在最上層
+  const ov = root.querySelector('#selection-overlay');
+  if (ov) root.appendChild(ov);
 }
 
-// ── cleanup & flatten ──
+// ── 清理與攤平 ──
+
+/**
+ * 解算 <style> 裡的 CSS 規則。
+ *
+ * Illustrator 匯出的 SVG 把顏色和線寬放在 class（.st0 { stroke: ... }）而非
+ * 屬性上，而 CSS 的優先權高於 presentation attribute，會讓我們後續寫入的
+ * stroke / stroke-width 全部失效（預覽看不見、選取高亮也不顯示）。
+ *
+ * 這裡把 SVG 暫時掛進隱藏容器實際渲染一次，交給瀏覽器算出最終樣式，
+ * 之後就能把它們寫成明確的屬性。回傳值與文件順序的 path 一一對應。
+ */
+function resolveComputedStyles(svgDoc) {
+  const host = document.createElement('div');
+  host.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;visibility:hidden';
+
+  const copy = document.importNode(svgDoc.documentElement, true);
+  host.appendChild(copy);
+  document.body.appendChild(host);
+
+  const resolved = [];
+  copy.querySelectorAll('path').forEach(p => {
+    if (p.closest('defs')) return;   // 與 cleanupAndFlatten 的 walk 保持一致
+    const cs = getComputedStyle(p);
+    resolved.push({
+      stroke: cs.stroke,
+      strokeWidth: parseFloat(cs.strokeWidth) || 1
+    });
+  });
+
+  document.body.removeChild(host);
+  return resolved;
+}
 
 function cleanupAndFlatten() {
   const root = currentSvg.documentElement;
   pathLayers = [];
 
-  // 蒐集所有 path，並記住它原本掛在哪個父層底下
+  // 先讓瀏覽器把 <style> 的 class 規則算成實際值（順序與下方的 walk 一致）
+  const styles = resolveComputedStyles(currentSvg);
+
+  // 蒐集所有 path，並記住它原本掛在哪個父層底下。
+  // 同時記錄被略過的圖形元素，匯出時它們會消失，必須讓使用者知道。
   const found = [];
+  const skipped = {};
+  const SHAPE_TAGS = ['rect','circle','ellipse','line','polyline','polygon','text','image','use'];
+
   const walk = (node) => {
     if (node.nodeType !== 1) return;
-    if (node.tagName === 'path') found.push({ el: node, parent: node.parentNode });
+
+    // 不要走進 <defs>：裡面 <clipPath> / <mask> 的 path 不是要繡的線
+    if (node.tagName === 'defs') return;
+
+    if (node.tagName === 'path') {
+      found.push({ el: node, parent: node.parentNode, style: styles[found.length] });
+    } else if (SHAPE_TAGS.indexOf(node.tagName) !== -1) {
+      skipped[node.tagName] = (skipped[node.tagName] || 0) + 1;
+    }
     for (let child of node.children) walk(child);
   };
   walk(root);
@@ -190,34 +266,45 @@ function cleanupAndFlatten() {
   const byParent = new Map();
   found.forEach(item => {
     const grouped = item.parent && item.parent !== root && item.parent.tagName === 'g';
-    if (!grouped) { buckets.push([item.el]); return; }
+    if (!grouped) { buckets.push([item]); return; }
     if (!byParent.has(item.parent)) {
       const bucket = [];
       byParent.set(item.parent, bucket);
       buckets.push(bucket);
     }
-    byParent.get(item.parent).push(item.el);
+    byParent.get(item.parent).push(item);
   });
 
   const defs = root.querySelector('defs');
   while (root.firstChild) root.removeChild(root.firstChild);
-  if (defs) root.appendChild(defs);
+  if (defs) {
+    // 樣式已解算成屬性，保留 <style> 只會繼續蓋掉我們寫入的值
+    defs.querySelectorAll('style').forEach(s => s.parentNode.removeChild(s));
+    root.appendChild(defs);
+  }
 
   buckets.forEach((paths, idx) => {
     const params = defaultParams(idx);
     const g = currentSvg.createElementNS('http://www.w3.org/2000/svg', 'g');
     const layer = { group: g, paths: [], origStroke: '#222222', origStrokeWidths: [], params };
 
-    paths.forEach((path, j) => {
-      const cloned = path.cloneNode(true);
+    paths.forEach((item, j) => {
+      const cloned = item.el.cloneNode(true);
+      const style = item.style || {};
+
+      // class 已無用武之地，留著只會在匯出檔裡繼續覆蓋屬性
+      cloned.removeAttribute('class');
+      cloned.removeAttribute('style');
+      cloned.setAttribute('fill', 'none');
 
       if (j === 0) {
-        // 整個圖層共用第一條 path 的顏色，預覽和色票才會一致
-        const rawStroke = cloned.getAttribute('stroke');
-        layer.origStroke = (rawStroke && rawStroke !== 'none' && rawStroke.startsWith('#')) ? rawStroke : '#222222';
+        // 顏色由 colorID 決定：取原始線色在色盤中最接近的一色，整層共用
+        const srcHex = normalizeColor(style.stroke || cloned.getAttribute('stroke'));
+        params.colorId = String(nearestPaletteId(srcHex));
+        layer.origStroke = paletteHex(params.colorId);
       }
       cloned.setAttribute('stroke', layer.origStroke);
-      layer.origStrokeWidths.push(cloned.getAttribute('stroke-width') || '1');
+      layer.origStrokeWidths.push(String(style.strokeWidth || cloned.getAttribute('stroke-width') || 1));
       cloned.setAttribute('stroke-width', PREVIEW_STROKE_WIDTH);
 
       g.appendChild(cloned);
@@ -229,10 +316,10 @@ function cleanupAndFlatten() {
     pathLayers.push(layer);
   });
 
-  return { layers: pathLayers.length, paths: found.length };
+  return { layers: pathLayers.length, paths: found.length, skipped: skipped };
 }
 
-// ── drag & drop ──
+// ── 拖曳排序 ──
 
 function onDragStart(e, idx) {
   dragSrcIdx = idx;
@@ -266,11 +353,11 @@ function onDrop(e, dropIdx) {
   e.currentTarget.classList.remove('drag-over');
   if (dragSrcIdx === null || dragSrcIdx === dropIdx) return;
 
-  // reorder pathLayers
+  // 重排 pathLayers
   const [moved] = pathLayers.splice(dragSrcIdx, 1);
   pathLayers.splice(dropIdx, 0, moved);
 
-  // update selected index
+  // 更新選取中的索引
   if (selectedPathIdx !== null) {
     if (selectedPathIdx === dragSrcIdx) {
       selectedPathIdx = dropIdx;
@@ -289,7 +376,7 @@ function onDrop(e, dropIdx) {
   if (selectedPathIdx !== null) renderEditPanel(selectedPathIdx);
 }
 
-// ── render list ──
+// ── 繪製圖層清單 ──
 
 function renderPathList() {
   const list = document.getElementById('pathLayerList');
@@ -334,7 +421,7 @@ function renderPathList() {
   });
 }
 
-// ── select & highlight ──
+// ── 選取與高亮 ──
 
 function selectPath(idx) {
   // 再點一次取消選取
@@ -343,15 +430,15 @@ function selectPath(idx) {
     return;
   }
 
-  if (selectedPathIdx !== null && pathLayers[selectedPathIdx]) {
-    const prev = pathLayers[selectedPathIdx];
-    prev.paths.forEach(p => { p.setAttribute('stroke', prev.origStroke); p.removeAttribute('filter'); });
-  }
-
   selectedPathIdx = idx;
-  const cur = pathLayers[idx];
-  cur.paths.forEach(p => p.setAttribute('stroke', '#FFFF00'));
+  buildSelectionOverlay(pathLayers[idx]);
 
+  renderPreview();
+  renderPathList();
+  renderEditPanel(idx);
+}
+
+function ensureGlowFilter() {
   const root = currentSvg.documentElement;
   let defs = root.querySelector('defs');
   if (!defs) { defs = currentSvg.createElementNS('http://www.w3.org/2000/svg','defs'); root.prepend(defs); }
@@ -370,14 +457,38 @@ function selectPath(idx) {
     const n2 = currentSvg.createElementNS('http://www.w3.org/2000/svg','feMergeNode'); n2.setAttribute('in','SourceGraphic');
     mg.appendChild(n1); mg.appendChild(n2); f.appendChild(bl); f.appendChild(mg); defs.appendChild(f);
   }
-  cur.paths.forEach(p => p.setAttribute('filter','url(#glow-filter)'));
-
-  renderPreview();
-  renderPathList();
-  renderEditPanel(idx);
 }
 
-// ── edit panel ──
+// 選取高亮做成獨立的半透明覆蓋層，而不是直接改線條顏色，
+// 這樣底下的真實顏色仍看得見，調色時可以即時看到變化。
+function clearSelectionOverlay() {
+  if (!currentSvg) return;
+  const ov = currentSvg.documentElement.querySelector('#selection-overlay');
+  if (ov) ov.parentNode.removeChild(ov);
+}
+
+function buildSelectionOverlay(layer) {
+  clearSelectionOverlay();
+  ensureGlowFilter();
+  const root = currentSvg.documentElement;
+  const ov = currentSvg.createElementNS('http://www.w3.org/2000/svg','g');
+  ov.id = 'selection-overlay';
+
+  layer.paths.forEach(p => {
+    const c = p.cloneNode(false);
+    c.removeAttribute('id');                       // 覆蓋層不帶參數名稱
+    c.setAttribute('fill','none');
+    c.setAttribute('stroke', SELECT_COLOR);
+    c.setAttribute('stroke-opacity', String(SELECT_OPACITY));
+    c.setAttribute('stroke-width', PREVIEW_STROKE_WIDTH + 2);
+    c.setAttribute('filter','url(#glow-filter)');
+    ov.appendChild(c);
+  });
+
+  root.appendChild(ov);   // 疊在最上層
+}
+
+// ── 參數編輯面板 ──
 
 function renderEditPanel(idx) {
   const panel = document.getElementById('editPanel');
@@ -402,11 +513,21 @@ function renderEditPanel(idx) {
       });
       sel.addEventListener('change', e => { params[paramKey] = e.target.value; applyParams(idx); });
       div.appendChild(sel);
-    } else if (type === 'color') {
-      const inp = document.createElement('input');
-      inp.type = 'color'; inp.value = normalizeColor(layer.origStroke);
-      inp.addEventListener('input', e => { layer.origStroke = e.target.value.toUpperCase(); renderPathList(); });
-      div.appendChild(inp);
+    } else if (type === 'palette') {
+      div.className = 'field field-wide';
+      const wrap = document.createElement('div');
+      wrap.className = 'palette';
+      STITCH_PALETTE.forEach(c => {
+        const sw = document.createElement('div');
+        sw.className = 'palette-swatch' + (String(params.colorId) === String(c.id) ? ' active' : '');
+        sw.style.background = c.hex;
+        sw.style.color = paletteTextColor(c.hex);
+        sw.textContent = c.id;
+        sw.title = c.id + ' · ' + c.name + ' · ' + c.hex;
+        sw.addEventListener('click', () => setLayerColor(idx, c.id));
+        wrap.appendChild(sw);
+      });
+      div.appendChild(wrap);
     } else {
       const inp = document.createElement('input');
       inp.type = type; inp.value = params[paramKey] || '';
@@ -418,27 +539,38 @@ function renderEditPanel(idx) {
 
   // sequence 不顯示（由拖曳決定）
   makeField('Embroidery type','ets','select',['ETS','SAT','OTHER']);
-  makeField('Color ID','colorId','number');
-  makeField('預覽顏色','_color','color');
   makeField('Pattern type','patternType','number');
   makeField('Stitch length','stitchLen','number');
   makeField('Pattern width','patternWid','number');
   makeField('Description','description','text');
+  makeField('Color ID','colorId','palette');
 
   panel.appendChild(grid);
   const nd = document.createElement('div'); nd.className = 'name-display'; nd.id = 'nameDisplay';
-  nd.textContent = 'Output ID: ' + buildLayerName(params);
+  nd.textContent = 'Output ID: ' + layerNameDisplay(layer);
   panel.appendChild(nd);
 }
 
+function setLayerColor(idx, colorId) {
+  const layer = pathLayers[idx];
+  layer.params.colorId = String(colorId);
+  layer.origStroke = paletteHex(colorId);
+
+  // 線條永遠是真實顏色（高亮走覆蓋層），所以換色會立刻反映在預覽上
+  layer.paths.forEach(p => p.setAttribute('stroke', layer.origStroke));
+  renderPreview();
+
+  applyParams(idx);
+  renderEditPanel(idx);
+}
+
 function applyParams(idx) {
-  const params = pathLayers[idx].params;
   applyLayerName(pathLayers[idx]);
-  document.getElementById('nameDisplay').textContent = 'Output ID: ' + buildLayerName(params);
+  document.getElementById('nameDisplay').textContent = 'Output ID: ' + layerNameDisplay(pathLayers[idx]);
   renderPathList();
 }
 
-// ── preview ──
+// ── 預覽 ──
 
 function renderPreview() {
   const previewDiv = document.getElementById('svgPreview');
@@ -462,7 +594,7 @@ function renderPreview() {
   }
 }
 
-// ── upload ──
+// ── 上傳 ──
 
 document.getElementById('svgUpload').addEventListener('change', e => {
   const file = e.target.files[0]; if (!file) return;
@@ -476,6 +608,16 @@ document.getElementById('svgUpload').addEventListener('change', e => {
     const msg = document.getElementById('statusMsg');
     msg.style.display = 'block';
     msg.textContent = '✓ 找到 ' + count.layers + ' 個圖層（共 ' + count.paths + ' 條 path）';
+
+    // 只處理 <path>，其餘圖形元素會在匯出時消失，必須明講而不是默默丟掉
+    const dropped = Object.keys(count.skipped);
+    if (dropped.length) {
+      const detail = dropped.map(t => '<' + t + '>×' + count.skipped[t]).join('、');
+      msg.textContent += '　⚠ 已略過 ' + detail + '，這些不會出現在匯出檔中';
+      msg.style.color = '#e0b01a';
+    } else {
+      msg.style.color = '';
+    }
     renderPathList(); renderPreview();
     document.getElementById('downloadBtn').style.display = 'inline-block';
     document.getElementById('editPanel').innerHTML = '<span class="placeholder">選擇 Path 進行編輯</span>';
@@ -483,29 +625,23 @@ document.getElementById('svgUpload').addEventListener('change', e => {
   reader.readAsText(file);
 });
 
-// ── deselect ──
+// ── 取消選取 ──
 
 function deselectAll() {
-  if (selectedPathIdx !== null && pathLayers[selectedPathIdx]) {
-    const prev = pathLayers[selectedPathIdx];
-    prev.paths.forEach(p => { p.setAttribute('stroke', prev.origStroke); p.removeAttribute('filter'); });
-  }
+  clearSelectionOverlay();
   selectedPathIdx = null;
   renderPreview();
   renderPathList();
   document.getElementById('editPanel').innerHTML = '<span class="placeholder">選擇 Path 進行編輯</span>';
 }
 
-// ── download ──
+// ── 下載 ──
 
 document.getElementById('downloadBtn').addEventListener('click', () => {
   if (!currentSvg) return;
 
-  // 清除高亮
-  if (selectedPathIdx !== null) {
-    const c = pathLayers[selectedPathIdx];
-    c.paths.forEach(p => { p.setAttribute('stroke', c.origStroke); p.removeAttribute('filter'); });
-  }
+  // 清除高亮覆蓋層，避免被寫進輸出檔
+  clearSelectionOverlay();
   // 還原線寬與顏色
   pathLayers.forEach(l => {
     l.paths.forEach((p, j) => {
@@ -531,9 +667,8 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
 
   // 恢復預覽
   pathLayers.forEach(l => l.paths.forEach(p => p.setAttribute('stroke-width', PREVIEW_STROKE_WIDTH)));
-  if (selectedPathIdx !== null) {
-    const c = pathLayers[selectedPathIdx];
-    c.paths.forEach(p => { p.setAttribute('stroke','#FFFF00'); p.setAttribute('filter','url(#glow-filter)'); });
+  if (selectedPathIdx !== null && pathLayers[selectedPathIdx]) {
+    buildSelectionOverlay(pathLayers[selectedPathIdx]);
   }
   renderPreview();
 });

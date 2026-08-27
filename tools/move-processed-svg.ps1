@@ -1,14 +1,14 @@
-# Moves *_processed.svg exports from the browser's Downloads folder into
-# data/svg/processed/, validating each file before it enters the pipeline.
+﻿# 把瀏覽器下載資料夾裡的 *_processed.svg 搬到 data/svg/processed/，
+# 每個檔案都先驗證過才放行進入 pipeline。
 #
-# Launched by move-processed-svg.bat in the repo root.
+# 由專案根目錄的 move-processed-svg.bat 啟動。
 
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $destDir  = Join-Path $repoRoot 'data\svg\processed'
 
-# --- Locate the Downloads folder (it can be redirected, so ask the shell) ---
+# --- 找出下載資料夾（位置可能被改過，所以向系統詢問而非寫死）---
 $downloads = $null
 try {
     $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders'
@@ -36,7 +36,7 @@ if ($candidates.Count -eq 0) {
     exit 0
 }
 
-# --- Validation: is this really a stitch-editor export? ---
+# --- 驗證：這真的是編輯器匯出的檔案嗎？---
 function Test-ProcessedSvg {
     param([string]$Path)
 
@@ -56,7 +56,7 @@ function Test-ProcessedSvg {
         return 'contains no <path> elements'
     }
 
-    # Layer parameters live in each path's id: 7 underscore-separated fields.
+    # 圖層參數存在每個 path 的 id 裡：以底線分隔的 7 個欄位。
     $named = @($paths | Where-Object { ($_.GetAttribute('id') -split '_').Count -ge 7 })
     if ($named.Count -eq 0) {
         return 'no <path> carries a 7-field layer name in its id'
@@ -65,7 +65,7 @@ function Test-ProcessedSvg {
         Write-Host ("  note: {0} of {1} paths have no layer name" -f ($paths.Count - $named.Count), $paths.Count) -ForegroundColor Yellow
     }
 
-    return $null  # valid
+    return $null  # 通過驗證
 }
 
 $moved = 0; $skipped = 0; $rejected = 0
@@ -73,7 +73,7 @@ $moved = 0; $skipped = 0; $rejected = 0
 foreach ($file in $candidates) {
     Write-Host "- $($file.Name)"
 
-    # Still downloading? Chrome/Edge/Firefox leave a partial file alongside.
+    # 還在下載中？Chrome/Edge/Firefox 會在旁邊留一個未完成的暫存檔。
     $partial = @(Get-ChildItem -Path $downloads -File -Filter "$($file.BaseName)*" |
                  Where-Object { $_.Extension -in '.crdownload', '.part', '.tmp' })
     if ($partial.Count -gt 0) {
@@ -81,7 +81,7 @@ foreach ($file in $candidates) {
         $skipped++; continue
     }
 
-    # Locked by another process (still being written)?
+    # 被其他程式鎖住（還在寫入）？
     try {
         $fs = [IO.File]::Open($file.FullName, 'Open', 'Read', 'None')
         $fs.Close()
@@ -109,7 +109,7 @@ foreach ($file in $candidates) {
             $skipped++; continue
         }
 
-        # Different content, same name: keep both rather than overwrite.
+        # 同名但內容不同：兩個都留著，絕不覆蓋。
         $stamp  = Get-Date -Format 'yyyyMMdd-HHmmss'
         $target = Join-Path $destDir ("{0}_{1}{2}" -f $file.BaseName, $stamp, $file.Extension)
         Write-Host "  name clash with different content -> saving as $(Split-Path $target -Leaf)" -ForegroundColor Yellow

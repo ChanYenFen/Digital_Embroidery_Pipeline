@@ -45,7 +45,7 @@ Before the Grasshopper pipeline runs, stitch layers are prepared in a standalone
 3. Edit the layer parameters — drag to reorder, then set embroidery type / color ID / stitch
    length and the rest per layer.
 4. Download the `_processed.svg` and save it into `data/svg/processed/`.
-5. Import the processed SVG into Rhino; the GH pipeline (`gh/RhStream_v2.py`) reads the
+5. Import the processed SVG into Rhino; the GH pipeline (`src/script/rhstream_v2.py`) reads the
    parameters back from each object's Name.
 
 ### Layer naming convention
@@ -60,11 +60,18 @@ sequence_ETS_colorID_patternType_stitchLen_patternWid_description
 | --- | --- |
 | `sequence` | Stitch order of the layer |
 | `ETS` | Embroidery type (`ETS` / `SAT` / `OTHER`) |
-| `colorID` | Thread color index |
+| `colorID` | Thread color index, `1`-`16` — the palette is defined in `tools/palette.js` |
 | `patternType` | Stitch pattern index (zigzag / cross / decorative / arrow / feather) |
 | `stitchLen` | Stitch length |
 | `patternWid` | Pattern width |
 | `description` | Free-text label |
+
+Every path in a layer carries the same id, since they share one parameter set,
+and the `<g>` wrapping them repeats it. Note this breaks the SVG rule that ids
+are unique — it is deliberate, to keep the names clean. Nothing downstream looks
+an element up by id; `svg_import_guids.py` walks the paths in document order and
+reads each one's id, so repeats are harmless there. A tool that does index by id
+may not cope.
 
 **Caution:** these parameters are stored in the `id` attribute of each `<path>`, which is the only
 thing carrying them downstream. Take the `_processed.svg` straight from the editor into Rhino — if
@@ -87,9 +94,6 @@ This project follows a standardized folder layout for Rhino + Grasshopper Python
 - `tools/`  
   Standalone helper tools, currently the browser-based SVG stitch editor
   (`svg-stitch-editor.html`), launched by `open-svg-editor.bat` in the repo root.
-
-- `gh/`  
-  GHPython scripts loaded by the Grasshopper definition (e.g. `RhStream_v2.py`).
 
 - `doc/`  
   Documentation, sketches, technical drawings, and visual references (`.png`, `.pdf`, etc.).

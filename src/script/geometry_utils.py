@@ -211,16 +211,22 @@ def sort_curves_by_rtree(curves, start_pt=rg.Point3d(0, 0, 0), use_two_opt=False
 
 def sort_curves_native(curves, start_pt=rg.Point3d(0, 0, 0),
                        use_two_opt=False, two_opt_max_passes=10, knn_k=12,
-                       if_flip=True):
+                       if_flip=True, return_travel_points=False):
     """C++-backed drop-in replacement for sort_curves_by_rtree.
 
     Same inputs/outputs; `knn_k` controls how many neighbors the greedy step
     queries per hop (8-16 is typical). `if_flip=False` fixes curve direction
-    (connect head->tail only): reversal stays 0 and 2-opt is skipped.
-    Returns (sorted curves, original indices).
+    (connect head->tail only): reversal stays 0 and 2-opt is skipped. 2-opt
+    itself switches from exhaustive O(n^2) to a windowed kd-tree search above
+    ~10000 curves (see curve_sort.cpp).
+
+    Returns (sorted curves, original indices). With `return_travel_points=True`,
+    returns a 3rd element: a list of n (start, end) Point3d tuples for the
+    native inter-curve travel path (start_pt -> first curve, then each
+    curve's exit -> the next curve's entry).
     """
     if not curves:
-        return [], []
+        return ([], [], []) if return_travel_points else ([], [])
 
     lib = native_bridge.load_dll()
 
@@ -234,6 +240,7 @@ def sort_curves_native(curves, start_pt=rg.Point3d(0, 0, 0),
     # Output buffers the DLL fills in.
     out_order    = (ctypes.c_int * n)()
     out_reversal = (ctypes.c_int * n)()
+    out_travel   = (ctypes.c_double * (n * 6))()
 
     lib.sort_curves(
         endpoints_ptr,
@@ -245,13 +252,19 @@ def sort_curves_native(curves, start_pt=rg.Point3d(0, 0, 0),
         1 if if_flip else 0,
         out_order,
         out_reversal,
+        out_travel,
     )
 
     order    = list(out_order)
     reversal = list(out_reversal)
 
     ordered_curves = misc.apply_order(curves, order, reversal)
-    return ordered_curves, order
+
+    if not return_travel_points:
+        return ordered_curves, order
+
+    travel_points = misc.travel_points_from_buffer(out_travel, n)
+    return ordered_curves, order, travel_points
 
 
 if __name__ == "__main__":

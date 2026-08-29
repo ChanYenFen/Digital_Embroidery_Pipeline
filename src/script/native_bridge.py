@@ -22,7 +22,7 @@ def load_dll():
     dll_path = os.path.join(here, "native", lib_name)
     lib = ctypes.CDLL(dll_path)
 
-    # void sort_curves(const double*, int, const double*, int, int, int, int*, int*)
+    # void sort_curves(const double*, int, const double*, int, int, int, int*, int*, double*)
     lib.sort_curves.argtypes = [
         ctypes.POINTER(ctypes.c_double),  # endpoints (6*n)
         ctypes.c_int,                     # n
@@ -33,6 +33,7 @@ def load_dll():
         ctypes.c_int,                     # if_flip
         ctypes.POINTER(ctypes.c_int),     # out_order (n)
         ctypes.POINTER(ctypes.c_int),     # out_reversal (n)
+        ctypes.POINTER(ctypes.c_double),  # out_travel_points (6*n)
     ]
     lib.sort_curves.restype = None
 

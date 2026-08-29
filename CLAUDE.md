@@ -43,20 +43,32 @@ Rhino (see the `unload_modules("emb_constants")` calls atop `emb_prepro.py`/`emb
 2-opt, both returning `(ordered_curves, ordered_indices)`:
 
 - `sort_curves_by_rtree` — pure Python, `Rhino.Geometry.RTree`.
-- `sort_curves_native` — same algorithm via `ctypes` into `curve_sort.dll`; adds `knn_k` and
-  `if_flip`. `native_bridge.py` owns loading the DLL and declaring the `ctypes` signature
-  (cached in a module-level handle); `misc.py` marshals curves to a flat
-  `[sx,sy,sz,ex,ey,ez,...]` double buffer and rebuilds `Rhino.Geometry.Curve` objects from the
-  returned order/reversal arrays.
+- `sort_curves_native` — same algorithm via `ctypes` into `curve_sort.dll`/`.dylib`; adds `knn_k`
+  and `if_flip`. `native_bridge.py` owns loading the native library (picks `.dll`/`.dylib`/`.so`
+  by `platform.system()`) and declaring the `ctypes` signature (cached in a module-level handle);
+  `misc.py` marshals curves to a flat `[sx,sy,sz,ex,ey,ez,...]` double buffer and rebuilds
+  `Rhino.Geometry.Curve` objects from the returned order/reversal arrays. Pass
+  `return_travel_points=True` to also get back the native inter-curve travel path (a list of
+  `(start, end)` `Point3d` tuples, one per curve: `start_pt`→first curve, then each curve's
+  exit→the next curve's entry) — the default `False` keeps the 2-tuple return so
+  `sort_curves_native`/`sort_curves_by_rtree` stay interchangeable via the same `partial(...)` call
+  in `geometry_utils.py`'s `__main__` block; this is independent of `emb_prepro.py`'s own
+  (post-pattern-filter, jump-arc) travel-path logic, not a replacement for it.
 
 Boundary contract: only flat coordinate/index arrays cross the ctypes boundary, never geometry
 objects. `if_flip=False` fixes direction (head→tail only): reversal stays all-zero and 2-opt is
-skipped, since reversing a sub-sequence would flip curve directions.
+skipped, since reversing a sub-sequence would flip curve directions. 2-opt itself is exhaustive
+O(n²) up to `TWO_OPT_WINDOW_THRESHOLD` (10000) curves; above that it switches to a windowed search
+over a second kd-tree built on current tour-edge midpoints (`WINDOW_K` = 500 nearest candidates per
+edge instead of all pairs) — an accepted accuracy/speed trade-off, not a bug, measured at ~2% worse
+total travel than exhaustive in exchange for an order-of-magnitude fewer comparisons.
 
-`curve_sort.dll` in `src/script/native/` is prebuilt (MSVC, `__declspec(dllexport)` + `extern "C"`)
-and checked in as a binary — there's no in-repo build script; rebuild with `cl.exe` against
-`nanoflann.hpp` if `curve_sort.cpp` changes. The `.obj`/`.lib`/`.exp` link intermediates are
-gitignored (see `.gitignore`), not tracked.
+`curve_sort.dll` (Windows, MSVC) and `curve_sort.dylib` (macOS, clang) in `src/script/native/` are
+prebuilt and checked in as binaries — there's no in-repo build script. Rebuild `.dll` with `cl.exe`
+against `nanoflann.hpp` on Windows; rebuild `.dylib` on macOS with
+`clang++ -std=c++17 -O2 -shared -fPIC -o curve_sort.dylib curve_sort.cpp`. Do this whenever
+`curve_sort.cpp` changes — each platform's binary is stale until rebuilt on that platform. The
+`.obj`/`.lib`/`.exp` MSVC link intermediates are gitignored (see `.gitignore`), not tracked.
 
 ## Repo layout
 

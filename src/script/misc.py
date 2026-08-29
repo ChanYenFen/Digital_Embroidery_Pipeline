@@ -33,4 +33,16 @@ def apply_order(curves, order, reversal):
             c.Reverse()
         out.append(c)
     return out
- 
+
+
+def travel_points_from_buffer(buf, n):
+    """Rebuild travel-segment endpoints from the native out_travel_points buffer.
+    Returns a list of n (start, end) Point3d tuples."""
+    import Rhino.Geometry as rg
+    out = []
+    for i in range(n):
+        base = i * 6
+        start = rg.Point3d(buf[base],     buf[base + 1], buf[base + 2])
+        end   = rg.Point3d(buf[base + 3], buf[base + 4], buf[base + 5])
+        out.append((start, end))
+    return out
